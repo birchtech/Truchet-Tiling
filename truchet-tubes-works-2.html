@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Truchet Customizable</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden}
+  canvas{display:block;width:100vw;height:100vh}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+(() => {
+  /* ======== PARAMETERS TO EDIT ======== */
+  const FG_COLOR      = "#000";           // tube color
+  const BG_COLOR      = "#ffffff";        // fallback background color
+  let   TUBE_RATIO    = 0.26;             // torus thickness (0.1–0.45 works best)
+  let   SPEED         = 300;              // ms per rotation animation
+  const BG_IMAGE_SRC  = "/home/drew/Desktop/canvas.png";               // e.g. "pattern.png"; empty = solid BG
+  /* ==================================== */
+
+  const BASE_TILE = 36, FPS = 30;
+  const FRAME_INTERVAL = 1000/FPS;
+  const canvas = document.getElementById("c");
+  const ctx = canvas.getContext("2d");
+
+  let bgImg = null;
+  if (BG_IMAGE_SRC) {
+    bgImg = new Image();
+    bgImg.src = BG_IMAGE_SRC;
+  }
+
+  let dpr = 1, cols=0, rows=0, tileSize=BASE_TILE;
+  let tiles=[], anim=null, off, offCtx, lastFrame=0;
+
+  function setupGrid(){
+    dpr = Math.max(window.devicePixelRatio||1,1);
+    const w = innerWidth, h = innerHeight;
+    cols = Math.ceil(w/BASE_TILE);
+    rows = Math.ceil(h/BASE_TILE);
+    tileSize = Math.ceil(Math.max(w/cols, h/rows));
+    canvas.width  = cols*tileSize*dpr;
+    canvas.height = rows*tileSize*dpr;
+    canvas.style.width  = cols*tileSize+"px";
+    canvas.style.height = rows*tileSize+"px";
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+  }
+
+  function makeOffscreen(){
+    off = document.createElement("canvas");
+    off.width = tileSize*dpr;
+    off.height = tileSize*dpr;
+    offCtx = off.getContext("2d");
+    offCtx.setTransform(dpr,0,0,dpr,0,0);
+    drawTileGraphic(offCtx,tileSize);
+  }
+
+  function drawTileGraphic(g,s){
+    g.clearRect(0,0,s,s);
+    g.fillStyle = FG_COLOR;
+
+    const R = s/2;
+    const tubeW = Math.max(1, TUBE_RATIO*R);
+    const outerR = R + tubeW/2;
+    const innerR = Math.max(0.1, R - tubeW/2);
+
+    // TL
+    g.beginPath();
+    g.arc(0,0,outerR,0,Math.PI/2);
+    g.arc(0,0,innerR,Math.PI/2,0,true);
+    g.closePath(); g.fill();
+
+    // BR
+    g.beginPath();
+    g.arc(s,s,outerR,Math.PI,1.5*Math.PI);
+    g.arc(s,s,innerR,1.5*Math.PI,Math.PI,true);
+    g.closePath(); g.fill();
+  }
+
+  function initTiles(){
+    tiles = new Array(cols*rows);
+    for(let i=0;i<tiles.length;i++) tiles[i]={orient:Math.floor(Math.random()*4)};
+    drawBackground();
+    for(let i=0;i<tiles.length;i++) drawTile(i);
+  }
+
+  function drawBackground(){
+    ctx.fillStyle = BG_COLOR;
+    ctx.fillRect(0,0,cols*tileSize, rows*tileSize);
+    if(bgImg && bgImg.complete){
+      const pw = bgImg.width, ph = bgImg.height;
+      for(let y=0;y<rows*tileSize;y+=ph)
+        for(let x=0;x<cols*tileSize;x+=pw)
+          ctx.drawImage(bgImg,x,y,pw,ph);
+    }
+  }
+
+  function drawTile(i,overrideAngle=null){
+    const x=i%cols, y=(i/cols|0);
+    const px=x*tileSize, py=y*tileSize;
+
+    ctx.save();
+    ctx.beginPath(); ctx.rect(px,py,tileSize,tileSize); ctx.clip();
+
+    // redraw BG patch
+    if(bgImg && bgImg.complete){
+      const pw=bgImg.width,ph=bgImg.height;
+      for(let ty=py;ty<py+tileSize;ty+=ph)
+        for(let tx=px;tx<px+tileSize;tx+=pw)
+          ctx.drawImage(bgImg,tx,ty,pw,ph);
+    } else {
+      ctx.fillStyle=BG_COLOR;
+      ctx.fillRect(px,py,tileSize,tileSize);
+    }
+
+    ctx.translate(px+tileSize/2, py+tileSize/2);
+    ctx.rotate(overrideAngle ?? tiles[i].orient*(Math.PI/2));
+    ctx.translate(-tileSize/2, -tileSize/2);
+    ctx.drawImage(off,0,0,tileSize,tileSize);
+    ctx.restore();
+  }
+
+  function scheduleNext(){
+    setTimeout(()=>{
+      const idx=Math.floor(Math.random()*tiles.length);
+      const from=tiles[idx].orient;
+      let to=Math.floor(Math.random()*4);
+      if(to===from) to=(from+1)%4;
+      anim={index:idx,from,to,start:performance.now()};
+    },120+Math.random()*240);
+  }
+
+  function loop(t){
+    if(t-lastFrame>=FRAME_INTERVAL){
+      lastFrame=t;
+      if(anim){
+        const p=Math.min(1,(t-anim.start)/SPEED);
+        const e=p<0.5?4*p*p*p:1-Math.pow(-2*p+2,3)/2;
+        const a0=anim.from*(Math.PI/2), a1=anim.to*(Math.PI/2);
+        const da=((a1-a0+Math.PI)%(2*Math.PI))-Math.PI;
+        drawTile(anim.index, a0+da*e);
+        if(p>=1){ tiles[anim.index].orient=anim.to; anim=null; scheduleNext(); }
+      }
+    }
+    requestAnimationFrame(loop);
+  }
+
+  window.addEventListener("resize", ()=>{setupGrid();makeOffscreen();initTiles();});
+  if(bgImg) bgImg.onload = ()=>{setupGrid();makeOffscreen();initTiles();};
+
+  setupGrid(); makeOffscreen(); initTiles(); scheduleNext(); requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
